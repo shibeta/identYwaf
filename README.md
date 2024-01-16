@@ -59,4 +59,5 @@ Options:
   --code=CODE         Expected HTTP code in rejected responses
   --string=STRING     Expected string in rejected responses
   --post              Use POST body for sending payloads
+  --file              Read multiple url from a text file, output ./result.csv
 ```
