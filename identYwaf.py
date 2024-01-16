@@ -12,6 +12,7 @@ from __future__ import print_function
 
 import base64
 import codecs
+import csv
 import difflib
 import json
 import locale
@@ -124,13 +125,23 @@ servers = set()
 codes = set()
 proxies = list()
 proxies_index = 0
+error_message = str()
 
 _exit = sys.exit
 
 def exit(message=None):
+    global error_message
     if message:
         print("%s%s" % (message, ' ' * 20))
+        # store run result in variable to collect them in one file
+        error_message = message
     _exit(1)
+
+def save_to_csv(content:list[list], filename:str):
+    with open(filename, mode='w', newline='') as csv_file:
+        csv_writer = csv.writer(csv_file, delimiter=',')
+        for row in content:
+            csv_writer.writerow(row)
 
 def retrieve(url, data=None):
     global proxies_index
@@ -300,6 +311,7 @@ def parse_args():
     parser.add_option("--debug", dest="debug", action="store_true", help=optparse.SUPPRESS_HELP)
     parser.add_option("--fast", dest="fast", action="store_true", help=optparse.SUPPRESS_HELP)
     parser.add_option("--lock", dest="lock", action="store_true", help=optparse.SUPPRESS_HELP)
+    parser.add_option("--file", dest="filename", help="Read multiple url from a text file, output ./result.csv")
 
     # Dirty hack(s) for help message
     def _(self, *args):
@@ -410,6 +422,7 @@ def non_blind_check(raw, silent=False):
 
 def run():
     global original
+    waf_info = []
 
     hostname = options.url.split("//")[-1].split('/')[0].split(':')[0]
 
@@ -514,20 +527,26 @@ def run():
 
     if blocked:
         print(colorize("[=] blocked categories: %s" % ", ".join(blocked)))
+        waf_info.insert(0, "blocked categories: %s" % ", ".join(blocked))
 
     if not results.strip('.') or not results.strip('x'):
         print(colorize("[-] blind match: -"))
+        waf_info.insert(0, "blind match: -")
 
         if re.search(r"(?i)captcha", original[HTML]) is not None:
-            exit(colorize("[x] there seems to be an activated captcha"))
+            print(colorize("[x] there seems to be an activated captcha"))
+            waf_info.insert(0, "protected by activated captcha")
     else:
         print(colorize("[=] signature: '%s'" % signature))
+        waf_info.insert(0, "signature: '%s'" % signature)
 
         if signature in SIGNATURES:
             waf = SIGNATURES[signature]
             print(colorize("[+] blind match: '%s' (100%%)" % format_name(waf)))
+            waf_info.insert(1, "blind match: '%s' (100%%)" % format_name(waf))
         elif results.count('x') < MIN_MATCH_PARTIAL:
             print(colorize("[-] blind match: -"))
+            waf_info.insert(1, "blind match: -")
         else:
             matches = {}
             markers = set()
@@ -560,13 +579,36 @@ def run():
             if not matches:
                 print(colorize("[-] blind match: - "))
                 print(colorize("[!] probably chained web protection systems"))
+                waf_info.insert(1, "blind match: maybe chained waf")
             else:
                 matches = [(_[1], _[0]) for _ in matches.items()]
                 matches.sort(reverse=True)
 
                 print(colorize("[+] blind match: %s" % ", ".join("'%s' (%d%%)" % (format_name(matches[i][1]), matches[i][0]) for i in xrange(min(len(matches), MAX_MATCHES) if matches[0][0] != 100 else 1))))
+                waf_info.insert(1, "[+] blind match: %s" % ", ".join("'%s' (%d%%)" % (format_name(matches[i][1]), matches[i][0]) for i in xrange(min(len(matches), MAX_MATCHES) if matches[0][0] != 100 else 1)))
 
     print()
+    return waf_info
+
+def check_multiple_url():
+    global options
+    result = []
+    with open(options.filename, "r") as url_file:
+        for url in url_file:
+            if not url.startswith("http"):
+                url = "http://%s" % url
+            if url.endswith('\n'):
+                url = url[:-1]
+            options.url = url
+            # run() may perform sys.exit(), use try-catch to aviod whole program exiting.
+            try:
+                protection = run()
+            except:
+                protection = [error_message]
+            result.append([url] + protection)
+
+    save_to_csv(result, "./result.csv")
+
 
 def main():
     if "--version" not in sys.argv:
@@ -574,7 +616,10 @@ def main():
 
     parse_args()
     init()
-    run()
+    if options.filename is not None:
+        check_multiple_url()
+    else:
+        run()
 
 load_data()
 
